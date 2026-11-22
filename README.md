@@ -171,3 +171,5 @@ brew install cmake openssl@3 qt
 ## 许可证
 
 MIT，见 [LICENSE](LICENSE)。
+
+第三方组件与 LGPLv3 合规声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)，许可证全文位于 `LICENSES/`。
