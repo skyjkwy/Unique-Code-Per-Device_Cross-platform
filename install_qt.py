@@ -7,7 +7,9 @@ import sys
 
 DEFAULT_QT_VERSION = "6.8.0"
 DEFAULT_PYPI_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"
-DEFAULT_QT_BASE = ""
+# 默认使用阿里云镜像（国内访问稳定，不被重定向到海外 ftp.jaist.ac.jp）
+# 国内备选：https://mirrors.tuna.tsinghua.edu.cn/qt  https://mirror.nju.edu.cn/qt
+DEFAULT_QT_BASE = "https://mirrors.aliyun.com/qt"
 
 
 def host_name():
@@ -66,7 +68,16 @@ def main():
     parser.add_argument("--out", default=default_out(), help="安装根目录，默认 %s" % default_out())
     parser.add_argument("--modules", default="", help="附加模块，逗号分隔，例如 qtcharts")
     parser.add_argument("--pypi-index", default=DEFAULT_PYPI_INDEX, help="pip 镜像")
-    parser.add_argument("--qt-base", default=DEFAULT_QT_BASE, help="Qt 下载镜像，默认使用官方源")
+    parser.add_argument("--qt-base", default=DEFAULT_QT_BASE,
+                        help="Qt 下载镜像，默认 %s" % DEFAULT_QT_BASE)
+    parser.add_argument("--official", action="store_true",
+                        help="强制使用 Qt 官方源（可能被重定向到海外镜像）")
+    parser.add_argument("--minimal", action="store_true", default=True,
+                        help="仅下载 qtbase + qttools（满足 Widgets GUI 构建），默认开启")
+    parser.add_argument("--all", dest="minimal", action="store_false",
+                        help="下载 Qt 所有默认组件（体积大）")
+    parser.add_argument("--timeout", type=int, default=120,
+                        help="单请求超时秒数，默认 120")
     args = parser.parse_args()
 
     if sys.version_info < (3, 8):
@@ -80,9 +91,13 @@ def main():
         sys.executable, "-m", "aqt", "install-qt",
         host_name(), "desktop", args.version, args.arch,
         "-O", args.out,
+        "--timeout", str(args.timeout),
     ]
-    if args.qt_base:
+    if args.qt_base and not args.official:
         cmd += ["-b", args.qt_base]
+    if args.minimal:
+        # qtbase = Core + Gui + Widgets，qttools = windeployqt / moc / uic
+        cmd += ["--archives", "qtbase", "qttools"]
     if args.modules:
         cmd += ["-m"] + [m.strip() for m in args.modules.split(",") if m.strip()]
 

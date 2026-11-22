@@ -5,6 +5,25 @@ set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "BUILD=%ROOT%\build"
 
+if /i "%~1"=="clean" (
+    if exist "%BUILD%" (
+        echo [INFO] Cleaning %BUILD% ...
+        powershell -NoProfile -Command "Remove-Item -Recurse -Force '%BUILD%'"
+        echo [OK] Cleaned.
+    ) else (
+        echo [OK] Nothing to clean.
+    )
+    exit /b 0
+)
+
+if /i "%~1"=="-h" (
+    echo Usage:
+    echo   build.bat                  Build with GUI auto-detection, pause on exit.
+    echo   build.bat clean            Remove the entire build directory.
+    echo   build.bat [cmake-args...]  Pass extra args to CMake, e.g. -DBUILD_GUI=OFF.
+    exit /b 0
+)
+
 set "PAUSE_ON_EXIT="
 if "%~1"=="" set "PAUSE_ON_EXIT=pause"
 
@@ -52,13 +71,45 @@ if errorlevel 1 (
 )
 
 echo [INFO] Removing intermediate files...
-for %%f in (license_stage1.dll license_stage1.lib license_stage1.exp hashgen.exe embed_key.exe license.exp final_hash.h) do (
-    if exist "%BUILD%\%%f" del /q "%BUILD%\%%f"
-)
-if exist "%BUILD%\*.pdb" del /q "%BUILD%\*.pdb"
 
-for /f "tokens=2 delims==" %%v in ('findstr /b /c:"BUILD_TESTS:BOOL=" "%BUILD%\CMakeCache.txt"') do set "BUILD_TESTS_VALUE=%%v"
-if /i "!BUILD_TESTS_VALUE!"=="OFF" if exist "%BUILD%\core_roundtrip.exe" del /q "%BUILD%\core_roundtrip.exe"
+for %%f in (license_stage1.dll license_stage1.lib license_stage1.exp hashgen.exe embed_key.exe final_hash.h license.exp license.lib) do (
+    if exist "%BUILD%\%%f" del /q "%BUILD%\%%f"
+    for /r "%BUILD%" %%a in (%%f) do @if exist "%%a" del /q "%%a"
+)
+for %%d in (generated stage1 lib) do (
+    if exist "%BUILD%\%%d" rmdir /s /q "%BUILD%\%%d"
+    for /r "%BUILD%" %%a in (%%d) do @if exist "%%a" rmdir /s /q "%%a"
+)
+for %%f in ("%BUILD%\*.pdb") do @if exist "%%f" del /q "%%f"
+
+findstr /b /c:"BUILD_TESTS:BOOL=OFF" "%BUILD%\CMakeCache.txt" >nul 2>&1
+if not errorlevel 1 (
+    for /r "%BUILD%" %%a in (core_roundtrip.exe) do @if exist "%%a" del /q "%%a"
+)
+
+if exist "%BUILD%\bin\license_system.exe" (
+    echo [INFO] Deploying Qt runtime to bin\ ...
+    powershell -NoProfile -Command ^
+      "$cache='%BUILD%\CMakeCache.txt';" ^
+      "$bin='%BUILD%\bin';" ^
+      "$qtPath=$null;" ^
+      "if(Test-Path $cache){" ^
+      "  foreach($line in Get-Content $cache){" ^
+      "    if($line -match '^Qt6Core_DIR:PATH=(.+)$'){" ^
+      "      $p=$Matches[1].Replace('/','\');" ^
+      "      $qtPath=Split-Path (Split-Path (Split-Path $p) -Parent) -Parent;" ^
+      "      break;" ^
+      "    }" ^
+      "  }" ^
+      "}" ^
+      "if(-not $qtPath -and (Test-Path 'C:\Qt')){" ^
+      "  $qtPath=Get-ChildItem 'C:\Qt' -Directory | Sort-Object Name -Descending | Select-Object -First 1 | ForEach-Object { Get-ChildItem $_.FullName -Directory | Sort-Object Name -Descending | Select-Object -First 1 } | ForEach-Object { $_.FullName };" ^
+      "}" ^
+      "if($qtPath){" ^
+      "  $dep=Join-Path $qtPath 'bin\windeployqt.exe';" ^
+      "  if(Test-Path $dep){ & $dep --release --no-translations --no-system-d3d-compiler --no-opengl-sw (Join-Path $bin 'license_system.exe') 2>`$null }" ^
+      "}"
+)
 
 echo [OK] Build finished. Output: %BUILD%
 if defined PAUSE_ON_EXIT !PAUSE_ON_EXIT!
