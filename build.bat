@@ -57,5 +57,8 @@ for %%f in (license_stage1.dll license_stage1.lib license_stage1.exp hashgen.exe
 )
 if exist "%BUILD%\*.pdb" del /q "%BUILD%\*.pdb"
 
+for /f "tokens=2 delims==" %%v in ('findstr /b /c:"BUILD_TESTS:BOOL=" "%BUILD%\CMakeCache.txt"') do set "BUILD_TESTS_VALUE=%%v"
+if /i "!BUILD_TESTS_VALUE!"=="OFF" if exist "%BUILD%\core_roundtrip.exe" del /q "%BUILD%\core_roundtrip.exe"
+
 echo [OK] Build finished. Output: %BUILD%
 if defined PAUSE_ON_EXIT !PAUSE_ON_EXIT!
