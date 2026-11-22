@@ -24,6 +24,7 @@ Unique-Code-Per-Device/
 ├─ CMakeLists.txt            跨平台构建入口
 ├─ build.sh                  Linux / macOS 一键构建
 ├─ build.bat                 Windows 一键构建（自动探测 VS + CMake + Ninja）
+├─ install_qt.py             Qt 6 安装脚本（基于 aqtinstall）
 ├─ include/                  公共头文件
 │  ├─ platform.h             平台抽象层
 │  ├─ license.h              授权核心
@@ -83,6 +84,18 @@ build.bat
 
 ```bat
 build.bat -DCMAKE_PREFIX_PATH="C:\Qt\6.8.0\msvc2022_64"
+```
+
+尚未安装 Qt 6 时，可先运行安装脚本（需要 Python 3.8+）：
+
+```bat
+python install_qt.py
+```
+
+脚本默认安装 Qt 6.8.0 到 `C:\Qt`，可用 `--version`、`--arch`、`--out`、`--modules` 调整。国内网络可改用镜像：
+
+```bat
+python install_qt.py --qt-base https://mirrors.aliyun.com/qt
 ```
 
 ### Linux

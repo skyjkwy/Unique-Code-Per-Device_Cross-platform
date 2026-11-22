@@ -13,7 +13,7 @@
 ```
 MIT License
 
-Copyright (c) 2026 skywyjk
+Copyright (c) 2026 skyjkwy
 ```
 
 MIT 许可证仅覆盖本项目原创代码，不改变任何第三方组件原有的许可证。
