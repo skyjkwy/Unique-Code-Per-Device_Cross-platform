@@ -4,6 +4,10 @@
 
 当前版本：1.0.0.0
 
+# Unique-Code-Per-Device（Cross-platform）
+
+一机一码授权系统（跨平台）：代码请见 [GitHub](https://github.com/skyjkwy/Unique-Code-Per-Device)
+
 ## 功能概览
 
 - 机器码：基于本机硬件指纹生成，可复制、可规范化、可混淆显示。
