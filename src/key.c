@@ -1,5 +1,5 @@
 #include "key.h"
-#include <windows.h>
+#include "platform.h"
 #include <string.h>
 
 #include "embedded_pubkey.h"

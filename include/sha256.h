@@ -1,10 +1,8 @@
 #ifndef SHA256_H
 #define SHA256_H
 
+#include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
-#include <windows.h>
-#include <bcrypt.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -14,8 +12,10 @@ extern "C" {
 #define SHA256_DIGEST_SIZE 32
 
 typedef struct {
-    BCRYPT_HASH_HANDLE handle;
-    BOOL inited;
+    uint32_t state[8];
+    uint64_t bitlen;
+    uint32_t datalen;
+    uint8_t data[64];
 } SHA256_CTX;
 
 void sha256_init(SHA256_CTX *ctx);

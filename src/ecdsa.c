@@ -1,17 +1,20 @@
 #include "ecdsa.h"
 #include "key.h"
 #include "sha256.h"
+
 #include <bcrypt.h>
-#include <string.h>
 #include <stdio.h>
+#include <string.h>
 
 #pragma comment(lib, "bcrypt.lib")
 
-BOOL ECDSA_GenerateKeyPair(const wchar_t *private_key_path, const wchar_t *public_key_path) {
+BOOL ECDSA_GenerateKeyPair(const char *private_key_path, const char *public_key_path) {
     BCRYPT_ALG_HANDLE hAlg = NULL;
     BCRYPT_KEY_HANDLE hKey = NULL;
     BOOL success = FALSE;
     NTSTATUS status;
+
+    if (!private_key_path || !public_key_path) return FALSE;
 
     status = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0);
     if (!BCRYPT_SUCCESS(status)) goto cleanup;
@@ -29,7 +32,7 @@ BOOL ECDSA_GenerateKeyPair(const wchar_t *private_key_path, const wchar_t *publi
                                  priv_blob, sizeof(priv_blob), &priv_blob_len, 0);
         if (!BCRYPT_SUCCESS(status) || priv_blob_len != ECDSA_PRIVKEY_BLOB_SIZE) goto cleanup;
 
-        FILE *fp = _wfopen(private_key_path, L"wb");
+        FILE *fp = lic_fopen(private_key_path, "wb");
         if (!fp) goto cleanup;
         if (fwrite(priv_blob, 1, priv_blob_len, fp) != priv_blob_len) {
             fclose(fp);
@@ -46,7 +49,7 @@ BOOL ECDSA_GenerateKeyPair(const wchar_t *private_key_path, const wchar_t *publi
                                  pub_blob, sizeof(pub_blob), &pub_blob_len, 0);
         if (!BCRYPT_SUCCESS(status) || pub_blob_len != ECDSA_PUBKEY_BLOB_SIZE) goto cleanup;
 
-        FILE *fp = _wfopen(public_key_path, L"wb");
+        FILE *fp = lic_fopen(public_key_path, "wb");
         if (!fp) goto cleanup;
         if (fwrite(pub_blob, 1, pub_blob_len, fp) != pub_blob_len) {
             fclose(fp);

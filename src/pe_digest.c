@@ -168,7 +168,6 @@ static int PeHeaderDigest(const uint8_t *d, const PeLayout *lay,
     int i = 0;
 
     sha256_init(&ctx);
-    if (!ctx.inited) return 0;
     for (i = 0; i < nex; i++) {
         if (ex[i].off > pos) {
             sha256_update(&ctx, d + pos, (size_t)(ex[i].off - pos));
@@ -248,7 +247,6 @@ int PeComputeStructDigest(const uint8_t *file_data,
     if (!PeExclusions(&lay, ex, &nex)) return 0;
 
     sha256_init(&ctx);
-    if (!ctx.inited) return 0;
 
     sha256_update(&ctx, (const uint8_t *)kMarker, sizeof(kMarker) - 1);
 

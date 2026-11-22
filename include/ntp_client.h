@@ -1,7 +1,8 @@
 #ifndef NTP_CLIENT_H
 #define NTP_CLIENT_H
 
-#include <windows.h>
+#include "platform.h"
+
 #include <stdint.h>
 
 #define NTP_TIMEOUT_SECONDS 3
@@ -10,6 +11,14 @@
 
 #define NTP_PORT 123
 
-BOOL GetNtpTime(uint32_t *ntp_time);
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+lic_bool GetNtpTime(uint32_t *ntp_time);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

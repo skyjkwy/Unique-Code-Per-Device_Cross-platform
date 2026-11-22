@@ -1,7 +1,8 @@
 #ifndef TIME_ANCHOR_H
 #define TIME_ANCHOR_H
 
-#include <windows.h>
+#include "platform.h"
+
 #include <stdint.h>
 
 #define ANCHOR_HMAC_SIZE 32
@@ -12,8 +13,16 @@ typedef struct {
     uint8_t hmac[ANCHOR_HMAC_SIZE];
 } TimeAnchor;
 
-BOOL InitTimeAnchors(const char* machine_code, uint32_t current_time);
-BOOL CheckTimeAnchors(const char* machine_code, uint32_t local_time, uint32_t* max_anchor_time);
-BOOL UpdateTimeAnchors(const char* machine_code, uint32_t current_time);
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+lic_bool InitTimeAnchors(const char* machine_code, uint32_t current_time);
+lic_bool CheckTimeAnchors(const char* machine_code, uint32_t local_time, uint32_t* max_anchor_time);
+lic_bool UpdateTimeAnchors(const char* machine_code, uint32_t current_time);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

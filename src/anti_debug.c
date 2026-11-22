@@ -469,7 +469,7 @@ void AntiDebug_GetStatus(AntiDebugStatus* status) {
     }
 }
 
-BOOL AntiDebug_StartPeriodicScan(DWORD interval_ms) {
+BOOL AntiDebug_StartPeriodicScan(uint32_t interval_ms) {
 
     UNREFERENCED_PARAMETER(interval_ms);
     return TRUE;

@@ -1,24 +1,24 @@
-#ifndef LICENSE_DLL_EXPORTS
-#define LICENSE_DLL_EXPORTS
-#endif
-
 #include "license_dll.h"
 #include "license.h"
 #include "ntp_client.h"
 #include "anti_debug.h"
 #include "sha256.h"
-#include "dll_hash.h"
+#include "platform.h"
 
-#include <windows.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
-extern const char* GetLastLicenseFileIOError(void);
+#if defined(_WIN32) && defined(LICENSE_SELF_HASH)
+#include "dll_hash.h"
+#endif
 
-static BOOL g_initialized = FALSE;
+extern const char *GetLastLicenseFileIOError(void);
+
+static lic_bool g_initialized = FALSE;
 
 static LicenseConfig g_default_config = {
     1,
@@ -31,7 +31,7 @@ static LicenseConfig g_config;
 
 static char g_machine_code[MACHINE_CODE_LEN] = {0};
 
-static BOOL g_is_activated = FALSE;
+static lic_bool g_is_activated = FALSE;
 
 static uint32_t g_expire_time = 0;
 
@@ -46,34 +46,37 @@ static uint32_t g_verified_time = 0;
 static uint32_t g_ntp_base_time = 0;
 static LARGE_INTEGER g_perf_counter_base;
 static LARGE_INTEGER g_perf_frequency;
-static BOOL g_ntp_base_ready = FALSE;
+static lic_bool g_ntp_base_ready = FALSE;
 
+#if defined(_WIN32)
 static HANDLE g_auto_check_timer = NULL;
+#endif
 
 static char g_lastErrorMsg[512] = {0};
 
-static void SetLastErrorUtf8(const char* fmt, ...) {
+static void SetLastErrorUtf8(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    _vsnprintf_s(g_lastErrorMsg, sizeof(g_lastErrorMsg), _TRUNCATE, fmt, ap);
+    vsnprintf(g_lastErrorMsg, sizeof(g_lastErrorMsg), fmt, ap);
     va_end(ap);
 }
 
 static uint32_t DllGetTrustedTime(void) {
-    if (g_ntp_base_ready) {
+    if (g_ntp_base_ready && g_perf_frequency.QuadPart > 0) {
         LARGE_INTEGER current_counter;
-        QueryPerformanceCounter(&current_counter);
-        __int64 elapsed_seconds = (current_counter.QuadPart - g_perf_counter_base.QuadPart)
-                                  / g_perf_frequency.QuadPart;
-        return (uint32_t)((__int64)g_ntp_base_time + elapsed_seconds);
+        lic_perf_counter(&current_counter);
+        long long elapsed_seconds =
+            (current_counter.QuadPart - g_perf_counter_base.QuadPart) /
+            g_perf_frequency.QuadPart;
+        return (uint32_t)((long long)g_ntp_base_time + elapsed_seconds);
     }
     return g_verified_time;
 }
 
 static void RecordNtpBase(uint32_t ntp_time) {
     g_ntp_base_time = ntp_time;
-    QueryPerformanceCounter(&g_perf_counter_base);
-    QueryPerformanceFrequency(&g_perf_frequency);
+    lic_perf_counter(&g_perf_counter_base);
+    lic_perf_frequency(&g_perf_frequency);
     g_ntp_base_ready = TRUE;
 }
 
@@ -91,8 +94,8 @@ LICENSE_API void License_SetNtpBase(uint32_t ntp_base_time,
 #define SKY_SESSION_KEY_TTL_MS   30000
 
 static uint8_t g_session_key[SHA256_DIGEST_SIZE];
-static BOOL g_session_key_valid = FALSE;
-static DWORD g_session_key_tick = 0;
+static lic_bool g_session_key_valid = FALSE;
+static uint64_t g_session_key_tick = 0;
 
 static const uint8_t SKY_KDF_SALT[SHA256_DIGEST_SIZE] = {
     0x53,0x6b,0x79,0x42,0x6f,0x78,0x2d,0x53,
@@ -101,16 +104,14 @@ static const uint8_t SKY_KDF_SALT[SHA256_DIGEST_SIZE] = {
     0x33,0x46,0x37,0x43,0x31,0x45,0x35,0x44
 };
 
-static BOOL GetFeatureTokenPath(char *out_path, size_t out_size) {
-    char base[MAX_PATH] = {0};
-    if (!GetEnvironmentVariableA("LOCALAPPDATA", base, (DWORD)sizeof(base)) || !base[0]) {
-        return FALSE;
-    }
-    _snprintf_s(out_path, out_size, _TRUNCATE, "%s\\SkySoftware\\" SKY_FEATURE_TOKEN_FILE, base);
+static lic_bool GetFeatureTokenPath(char *out_path, size_t out_size) {
+    char dir[LICENSE_PATH_MAX];
+    if (lic_data_dir(dir, sizeof(dir), "SkySoftware", 1) != 0) return FALSE;
+    lic_snprintf(out_path, out_size, "%s/%s", dir, SKY_FEATURE_TOKEN_FILE);
     return out_path[0] != '\0';
 }
 
-static BOOL DeriveSessionKey(uint8_t out_key[SHA256_DIGEST_SIZE]) {
+static lic_bool DeriveSessionKey(uint8_t out_key[SHA256_DIGEST_SIZE]) {
     if (!g_machine_code[0]) return FALSE;
 
     uint32_t disk_expire = 0;
@@ -125,27 +126,27 @@ static BOOL DeriveSessionKey(uint8_t out_key[SHA256_DIGEST_SIZE]) {
 
     char online_code[24] = {0};
     uint32_t online_last = 0;
-    BOOL has_online = LoadOnlineAuth(online_code, sizeof(online_code), &online_last)
-                      && online_code[0] != '\0';
+    lic_bool has_online = LoadOnlineAuth(online_code, sizeof(online_code), &online_last)
+                          && online_code[0] != '\0';
 
     char material[320] = {0};
-    _snprintf_s(material, sizeof(material), _TRUNCATE, "%s|%08x|%s|%s",
-                g_machine_code, (unsigned int)disk_expire,
-                has_online ? online_code : "-", disk_user);
+    lic_snprintf(material, sizeof(material), "%s|%08x|%s|%s",
+                 g_machine_code, (unsigned int)disk_expire,
+                 has_online ? online_code : "-", disk_user);
 
     uint8_t ikm[SHA256_DIGEST_SIZE];
     sha256_hash((const uint8_t *)material, strlen(material), ikm);
     hmac_sha256(SKY_KDF_SALT, sizeof(SKY_KDF_SALT), ikm, sizeof(ikm), out_key);
 
-    SecureZeroMemory(material, sizeof(material));
-    SecureZeroMemory(ikm, sizeof(ikm));
-    SecureZeroMemory(online_code, sizeof(online_code));
+    lic_secure_zero(material, sizeof(material));
+    lic_secure_zero(ikm, sizeof(ikm));
+    lic_secure_zero(online_code, sizeof(online_code));
     return TRUE;
 }
 
 static void RefreshFeatureToken(void) {
     uint8_t key[SHA256_DIGEST_SIZE];
-    char path[MAX_PATH] = {0};
+    char path[LICENSE_PATH_MAX] = {0};
     char hex[SHA256_DIGEST_SIZE * 2 + 1] = {0};
 
     g_session_key_valid = FALSE;
@@ -154,38 +155,31 @@ static void RefreshFeatureToken(void) {
     if (!GetFeatureTokenPath(path, sizeof(path))) return;
 
     if (!DeriveSessionKey(key)) {
-        DeleteFileA(path);
+        lic_remove(path);
         return;
     }
 
     memcpy(g_session_key, key, sizeof(g_session_key));
     g_session_key_valid = TRUE;
-    g_session_key_tick = GetTickCount();
+    g_session_key_tick = lic_tick_ms();
 
     hmac_sha256_to_hex(key, SHA256_DIGEST_SIZE,
                        (const uint8_t *)SKY_FEATURE_TOKEN_LABEL,
                        strlen(SKY_FEATURE_TOKEN_LABEL), hex);
 
     InitLicenseBackupDirectory();
+    lic_write_all(path, hex, strlen(hex), 1);
 
-    HANDLE hFile = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-                               FILE_ATTRIBUTE_HIDDEN, NULL);
-    if (hFile != INVALID_HANDLE_VALUE) {
-        DWORD hex_len = (DWORD)strlen(hex);
-        DWORD written = 0;
-        WriteFile(hFile, hex, hex_len, &written, NULL);
-        CloseHandle(hFile);
-    }
-
-    SecureZeroMemory(key, sizeof(key));
-    SecureZeroMemory(hex, sizeof(hex));
+    lic_secure_zero(key, sizeof(key));
+    lic_secure_zero(hex, sizeof(hex));
 }
 
-LICENSE_API int License_GetSessionKey(unsigned char* out_key, int buf_size) {
+LICENSE_API int License_GetSessionKey(unsigned char *out_key, int buf_size) {
     if (!g_initialized) return LICENSE_NOT_INITIALIZED;
     if (!out_key || buf_size < SHA256_DIGEST_SIZE) return LICENSE_INVALID_PARAM;
 
-    if (!g_session_key_valid || (GetTickCount() - g_session_key_tick) > SKY_SESSION_KEY_TTL_MS) {
+    if (!g_session_key_valid ||
+        (lic_tick_ms() - g_session_key_tick) > SKY_SESSION_KEY_TTL_MS) {
         uint8_t key[SHA256_DIGEST_SIZE];
         if (!DeriveSessionKey(key)) {
             g_session_key_valid = FALSE;
@@ -193,18 +187,20 @@ LICENSE_API int License_GetSessionKey(unsigned char* out_key, int buf_size) {
         }
         memcpy(g_session_key, key, sizeof(g_session_key));
         g_session_key_valid = TRUE;
-        g_session_key_tick = GetTickCount();
-        SecureZeroMemory(key, sizeof(key));
+        g_session_key_tick = lic_tick_ms();
+        lic_secure_zero(key, sizeof(key));
     }
 
     memcpy(out_key, g_session_key, SHA256_DIGEST_SIZE);
     return LICENSE_OK;
 }
 
-static BOOL VerifySelfCodeIntegrity(void) {
+static lic_bool VerifySelfCodeIntegrity(void) {
+#if defined(_WIN32) && defined(LICENSE_SELF_HASH)
     HMODULE hSelf = NULL;
 
-    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                             (LPCSTR)VerifySelfCodeIntegrity, &hSelf)) {
         return FALSE;
     }
@@ -236,9 +232,13 @@ static BOOL VerifySelfCodeIntegrity(void) {
     char hex_str[SHA256_DIGEST_SIZE * 2 + 1];
     sha256_to_hex(hash, hex_str);
 
-    return (strcmp(hex_str, LICENSE_DLL_CODE_SHA256) == 0);
+    return strcmp(hex_str, LICENSE_DLL_CODE_SHA256) == 0 ? TRUE : FALSE;
+#else
+    return TRUE;
+#endif
 }
 
+#if defined(_WIN32)
 static void InitAntiDebug(void) {
     AntiDebug_Init();
     AntiDebug_StartPeriodicScan(5000);
@@ -250,18 +250,16 @@ static void CleanupAntiDebug(void) {
 }
 
 static VOID CALLBACK AutoCheckCallback(PVOID lpParameter, BOOLEAN TimerOrWaitFired) {
-    UNREFERENCED_PARAMETER(lpParameter);
-    UNREFERENCED_PARAMETER(TimerOrWaitFired);
+    (void)lpParameter;
+    (void)TimerOrWaitFired;
 
     if (!VerifySelfCodeIntegrity()) {
         g_is_activated = FALSE;
-
     }
 }
 
 BOOL APIENTRY DllMain(HMODULE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
-    UNREFERENCED_PARAMETER(hinstDLL);
-    UNREFERENCED_PARAMETER(lpvReserved);
+    (void)lpvReserved;
 
     switch (fdwReason) {
         case DLL_PROCESS_ATTACH:
@@ -278,23 +276,25 @@ BOOL APIENTRY DllMain(HMODULE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
                 g_is_activated = FALSE;
             }
             break;
-        case DLL_THREAD_ATTACH:
-            break;
-        case DLL_THREAD_DETACH:
+        default:
             break;
     }
-
     return TRUE;
 }
+#else
+static void InitAntiDebug(void) {
+    AntiDebug_Init();
+}
 
-LICENSE_API int License_Init(const LicenseConfig* config) {
-    if (g_initialized) {
-        return LICENSE_OK;
-    }
+static void CleanupAntiDebug(void) {
+    AntiDebug_Cleanup();
+}
+#endif
 
-    if (!VerifySelfCodeIntegrity()) {
-        return LICENSE_ERROR;
-    }
+LICENSE_API int License_Init(const LicenseConfig *config) {
+    if (g_initialized) return LICENSE_OK;
+
+    if (!VerifySelfCodeIntegrity()) return LICENSE_ERROR;
 
     InitLicenseBackupDirectory();
 
@@ -320,7 +320,6 @@ LICENSE_API int License_Init(const LicenseConfig* config) {
             g_verified_time = (uint32_t)time(NULL);
         }
     } else {
-
         g_verified_time = DllGetTrustedTime();
     }
 
@@ -328,8 +327,12 @@ LICENSE_API int License_Init(const LicenseConfig* config) {
     char saved_username[USERNAME_LEN] = {0};
     char saved_email[EMAIL_LEN] = {0};
 
-    if (LoadActivationStatus(g_machine_code, &saved_expire, saved_username, saved_email)) {
-        if (!IsLicenseExpired(saved_expire, g_verified_time)) {
+    if (LoadActivationStatus(g_machine_code, &saved_expire,
+                             saved_username, saved_email)) {
+        uint32_t last_seen = 0;
+        if (!CheckTimeRollback(&last_seen, g_verified_time)) {
+            g_is_activated = FALSE;
+        } else if (!IsLicenseExpired(saved_expire, g_verified_time)) {
             g_is_activated = TRUE;
             g_expire_time = saved_expire;
             g_license_source = GetActivationSource();
@@ -337,22 +340,23 @@ LICENSE_API int License_Init(const LicenseConfig* config) {
                 g_license_source != LICENSE_SOURCE_ONLINE) {
                 g_license_source = LICENSE_SOURCE_OFFLINE;
             }
-            strncpy_s(g_username, sizeof(g_username), saved_username, _TRUNCATE);
-            strncpy_s(g_email, sizeof(g_email), saved_email, _TRUNCATE);
+            lic_strcpy(g_username, sizeof(g_username), saved_username);
+            lic_strcpy(g_email, sizeof(g_email), saved_email);
             UpdateLastSeenTime(g_verified_time);
-
             RefreshFeatureToken();
         }
     }
 
     g_initialized = TRUE;
 
+#if defined(_WIN32)
     if (g_config.auto_check_interval > 0) {
         CreateTimerQueueTimer(&g_auto_check_timer, NULL, AutoCheckCallback, NULL,
                               (DWORD)g_config.auto_check_interval * 1000,
                               (DWORD)g_config.auto_check_interval * 1000,
                               WT_EXECUTEDEFAULT);
     }
+#endif
 
     return LICENSE_OK;
 }
@@ -360,10 +364,12 @@ LICENSE_API int License_Init(const LicenseConfig* config) {
 LICENSE_API void License_Shutdown(void) {
     if (!g_initialized) return;
 
+#if defined(_WIN32)
     if (g_auto_check_timer) {
         DeleteTimerQueueTimer(NULL, g_auto_check_timer, NULL);
         g_auto_check_timer = NULL;
     }
+#endif
     CleanupAntiDebug();
 
     g_initialized = FALSE;
@@ -376,17 +382,14 @@ LICENSE_API void License_Shutdown(void) {
     memset(g_machine_code, 0, sizeof(g_machine_code));
 }
 
-LICENSE_API BOOL License_IsActivated(void) {
-    if (!g_initialized) {
-        return FALSE;
-    }
+LICENSE_API lic_bool License_IsActivated(void) {
+    if (!g_initialized) return FALSE;
 
     if (g_is_activated) {
-
         if (!VerifySelfCodeIntegrity()) {
             g_is_activated = FALSE;
             ClearActivationStatus();
-            ExitProcess(1);
+            lic_process_exit(1);
         }
 
         g_verified_time = DllGetTrustedTime();
@@ -395,34 +398,27 @@ LICENSE_API BOOL License_IsActivated(void) {
             g_is_activated = FALSE;
             return FALSE;
         }
-
         return TRUE;
     }
 
     return FALSE;
 }
 
-LICENSE_API int License_GetInfo(LicenseInfo* info) {
-    if (!g_initialized) {
-        return LICENSE_NOT_INITIALIZED;
-    }
-
-    if (!info) {
-        return LICENSE_INVALID_PARAM;
-    }
+LICENSE_API int License_GetInfo(LicenseInfo *info) {
+    if (!g_initialized) return LICENSE_NOT_INITIALIZED;
+    if (!info) return LICENSE_INVALID_PARAM;
 
     memset(info, 0, sizeof(LicenseInfo));
 
     g_verified_time = DllGetTrustedTime();
-
     info->current_time = g_verified_time;
-    strncpy_s(info->machine_code, sizeof(info->machine_code), g_machine_code, _TRUNCATE);
+    lic_strcpy(info->machine_code, sizeof(info->machine_code), g_machine_code);
 
     if (g_is_activated) {
         info->expire_time = g_expire_time;
         info->source = g_license_source;
-        strncpy_s(info->username, sizeof(info->username), g_username, _TRUNCATE);
-        strncpy_s(info->email, sizeof(info->email), g_email, _TRUNCATE);
+        lic_strcpy(info->username, sizeof(info->username), g_username);
+        lic_strcpy(info->email, sizeof(info->email), g_email);
 
         if (IsLicenseExpired(g_expire_time, g_verified_time)) {
             info->status = LICENSE_STATUS_EXPIRED;
@@ -445,64 +441,42 @@ LICENSE_API int License_GetInfo(LicenseInfo* info) {
     return LICENSE_OK;
 }
 
-LICENSE_API int License_GetMachineCode(char* machine_code, int buf_size) {
-    if (!g_initialized) {
-        return LICENSE_NOT_INITIALIZED;
-    }
+LICENSE_API int License_GetMachineCode(char *machine_code, int buf_size) {
+    if (!g_initialized) return LICENSE_NOT_INITIALIZED;
+    if (!machine_code || buf_size < MACHINE_CODE_LEN) return LICENSE_INVALID_PARAM;
 
-    if (!machine_code || buf_size < MACHINE_CODE_LEN) {
-        return LICENSE_INVALID_PARAM;
-    }
-
-    strncpy_s(machine_code, buf_size, g_machine_code, _TRUNCATE);
-    machine_code[buf_size - 1] = '\0';
-
+    lic_strcpy(machine_code, (size_t)buf_size, g_machine_code);
     return LICENSE_OK;
 }
 
-LICENSE_API int License_GetObfuscatedMachineCode(char* obfuscated_out, int buf_size) {
-    if (!g_initialized) {
-        return LICENSE_NOT_INITIALIZED;
-    }
-
-    if (!obfuscated_out || buf_size < MACHINE_CODE_LEN) {
-        return LICENSE_INVALID_PARAM;
-    }
+LICENSE_API int License_GetObfuscatedMachineCode(char *obfuscated_out, int buf_size) {
+    if (!g_initialized) return LICENSE_NOT_INITIALIZED;
+    if (!obfuscated_out || buf_size < MACHINE_CODE_LEN) return LICENSE_INVALID_PARAM;
 
     if (!ObfuscateMachineCode(g_machine_code, obfuscated_out, (size_t)buf_size)) {
-
-        strncpy_s(obfuscated_out, buf_size, g_machine_code, _TRUNCATE);
-        obfuscated_out[buf_size - 1] = '\0';
+        lic_strcpy(obfuscated_out, (size_t)buf_size, g_machine_code);
     }
-
     return LICENSE_OK;
 }
 
-LICENSE_API int License_NormalizeMachineCode(const char* input_machine_code, char* normalized_out, int buf_size) {
+LICENSE_API int License_NormalizeMachineCode(const char *input_machine_code,
+                                             char *normalized_out, int buf_size) {
     if (!input_machine_code || !normalized_out || buf_size < MACHINE_CODE_LEN) {
         return LICENSE_INVALID_PARAM;
     }
-
     if (!NormalizeMachineCode(input_machine_code, normalized_out, (size_t)buf_size)) {
         return LICENSE_INVALID_PARAM;
     }
-
     return LICENSE_OK;
 }
 
-LICENSE_API BOOL License_Verify(void) {
-    if (!g_initialized) {
-        return FALSE;
-    }
-
-    if (!g_is_activated) {
-        return FALSE;
-    }
+LICENSE_API lic_bool License_Verify(void) {
+    if (!g_initialized || !g_is_activated) return FALSE;
 
     if (!VerifySelfCodeIntegrity()) {
         g_is_activated = FALSE;
         ClearActivationStatus();
-        ExitProcess(1);
+        lic_process_exit(1);
     }
 
     g_verified_time = DllGetTrustedTime();
@@ -515,9 +489,7 @@ LICENSE_API BOOL License_Verify(void) {
         return FALSE;
     }
 
-    if (verified_time > g_verified_time) {
-        g_verified_time = verified_time;
-    }
+    if (verified_time > g_verified_time) g_verified_time = verified_time;
 
     if (IsLicenseExpired(g_expire_time, g_verified_time)) {
         g_is_activated = FALSE;
@@ -530,16 +502,14 @@ LICENSE_API BOOL License_Verify(void) {
 }
 
 LICENSE_API int License_ShowActivationDialog(HWND parent_hwnd) {
-    if (!g_initialized) {
-        return LICENSE_NOT_INITIALIZED;
-    }
+    if (!g_initialized) return LICENSE_NOT_INITIALIZED;
 
     char machine_code[MACHINE_CODE_LEN] = {0};
-    strncpy_s(machine_code, sizeof(machine_code), g_machine_code, _TRUNCATE);
+    lic_strcpy(machine_code, sizeof(machine_code), g_machine_code);
 
+#if defined(_WIN32)
     WCHAR message[512];
     WCHAR w_machine[512];
-
     ZeroMemory(w_machine, sizeof(w_machine));
     MultiByteToWideChar(CP_UTF8, 0, machine_code, -1, w_machine, 512);
 
@@ -550,17 +520,24 @@ LICENSE_API int License_ShowActivationDialog(HWND parent_hwnd) {
         w_machine);
 
     MessageBoxW(parent_hwnd, message, L"激活提示", MB_OK | MB_ICONINFORMATION);
+#else
+    (void)parent_hwnd;
+    fprintf(stderr,
+            "您的机器码是：\n\n%s\n\n"
+            "请复制此机器码，联系开发者获取激活码。\n",
+            machine_code);
+#endif
 
     return LICENSE_OK;
 }
 
-LICENSE_API int License_Activate(const char* activation_code, const char* username, const char* email) {
+LICENSE_API int License_Activate(const char *activation_code,
+                                 const char *username, const char *email) {
     g_lastErrorMsg[0] = '\0';
     if (!g_initialized) {
         SetLastErrorUtf8("授权系统未初始化，请先调用 License_Init");
         return LICENSE_NOT_INITIALIZED;
     }
-
     if (!activation_code || strlen(activation_code) == 0) {
         SetLastErrorUtf8("激活码为空");
         return LICENSE_INVALID_PARAM;
@@ -583,9 +560,8 @@ LICENSE_API int License_Activate(const char* activation_code, const char* userna
 
     char safe_username[USERNAME_LEN] = {0};
     char safe_email[EMAIL_LEN] = {0};
-
-    if (username) strncpy_s(safe_username, sizeof(safe_username), username, _TRUNCATE);
-    if (email) strncpy_s(safe_email, sizeof(safe_email), email, _TRUNCATE);
+    if (username) lic_strcpy(safe_username, sizeof(safe_username), username);
+    if (email) lic_strcpy(safe_email, sizeof(safe_email), email);
 
     int result = ValidateActivationCode(
         g_machine_code, safe_username, safe_email,
@@ -593,12 +569,10 @@ LICENSE_API int License_Activate(const char* activation_code, const char* userna
     );
 
     if (result != ACT_VALID) {
-
         char timeNowBuf[32] = {0};
         {
-            time_t tt = (time_t)g_verified_time;
             struct tm tm_buf;
-            if (localtime_s(&tm_buf, &tt) == 0) {
+            if (lic_localtime(g_verified_time, &tm_buf) == 0) {
                 strftime(timeNowBuf, sizeof(timeNowBuf), "%Y-%m-%d %H:%M:%S", &tm_buf);
             }
         }
@@ -606,40 +580,35 @@ LICENSE_API int License_Activate(const char* activation_code, const char* userna
         if (result == ACT_USED) {
             SetLastErrorUtf8(
                 "激活码已被使用：序列号 %s 已在本台机器的 license-SkyBox.dat 中登记。\n"
-                "解决方法：请在激活码生成器中重新点击【生成激活码】，产生一个新序列号的激活码（生成时间会变化，序列号也会不同），再用新码续期。",
+                "解决方法：请在激活码生成器中重新点击【生成激活码】，产生一个新序列号的激活码，再用新码续期。",
                 code_seq);
         } else if (result == ACT_EXPIRED_FUTURE) {
             char expBuf[32] = {0};
-            time_t tt = (time_t)expire_time;
             struct tm tm_buf;
-            if (expire_time > 0 && localtime_s(&tm_buf, &tt) == 0) {
+            if (expire_time > 0 && lic_localtime(expire_time, &tm_buf) == 0) {
                 strftime(expBuf, sizeof(expBuf), "%Y-%m-%d %H:%M:%S", &tm_buf);
             }
             SetLastErrorUtf8(
                 "激活码已过期：该激活码到期时间为 %s，而本机可信时间是 %s。\n"
-                "解决方法：请在激活码生成器中将授权时长设置为更大的数值（例如 1 年、365 天），重新生成激活码。",
+                "解决方法：请在激活码生成器中将授权时长设置为更大的数值，重新生成激活码。",
                 expBuf[0] ? expBuf : "未知", timeNowBuf[0] ? timeNowBuf : "未知");
         } else {
-
-            char clean_machine[200] = {0};
-
             char expHint[64] = {0};
             if (expire_time > 0) {
-                time_t tt = (time_t)expire_time;
                 struct tm tm_buf;
-                if (localtime_s(&tm_buf, &tt) == 0) {
+                if (lic_localtime(expire_time, &tm_buf) == 0) {
                     strftime(expHint, sizeof(expHint), "expire=%Y-%m-%d %H:%M:%S", &tm_buf);
                 }
             }
             SetLastErrorUtf8(
                 "激活码无效（哈希校验/CRC校验/时间范围 之一不通过）。\n"
-                "—— 请严格对照以下 4 项逐一检查，100%% 匹配才能通过：\n"
+                "请严格对照以下 4 项逐一检查，100%% 匹配才能通过：\n"
                 "  1) 机器码：生成器里的机器码 和 续期界面的机器码 必须完全一样（当前本机：%.16s...）；\n"
-                "  2) 用户名：生成器里填的用户名 和 续期界面的用户名 必须完全一样（大小写、空格都算不同）（当前激活入参：%s）；\n"
+                "  2) 用户名：生成器里填的用户名 和 续期界面的用户名 必须完全一样（当前激活入参：%s）；\n"
                 "  3) 邮箱：生成器里填的邮箱 和 续期界面的邮箱 必须完全一样（当前激活入参：%s）；\n"
-                "  4) 时间：生成器与本台机器可信时间不能相差 > 60 秒（本机时间：%s），否则会被判定为『生成时间超窗』。\n"
+                "  4) 时间：生成器与本台机器可信时间不能相差 > 60 秒（本机时间：%s）。\n"
                 "%s%s%s"
-                "如果以上 4 项已完全一致仍提示无效，请把生成器中的激活码完整复制（不要漏首尾字符），或者关闭生成器再重新生成一次新的激活码重试。",
+                "如果以上 4 项已完全一致仍提示无效，请把生成器中的激活码完整复制，或者关闭生成器再重新生成一次新的激活码重试。",
                 g_machine_code,
                 safe_username[0] ? safe_username : "(空)",
                 safe_email[0] ? safe_email : "(空)",
@@ -652,21 +621,20 @@ LICENSE_API int License_Activate(const char* activation_code, const char* userna
     }
 
     if (!SaveActivationStatus(TRUE, g_machine_code, expire_time,
-                               safe_username, safe_email, code_seq, g_verified_time)) {
-        const char* detail = GetLastLicenseFileIOError();
+                              safe_username, safe_email, code_seq, g_verified_time)) {
+        const char *detail = GetLastLicenseFileIOError();
         if (detail && detail[0]) {
             SetLastErrorUtf8(
                 "保存授权文件 license-SkyBox.dat 失败，可能是程序没有写入权限。\n"
                 "==============================\n"
-                "【详细诊断信息】\n"
-                "%s\n"
+                "【详细诊断信息】\n%s\n"
                 "==============================\n"
-                "建议尝试：先关闭所有可能占用 license-SkyBox.dat 的程序，再右键 SkyBox.exe → 以管理员身份运行后重试授权更新。",
+                "建议尝试：关闭占用文件的其他程序，或使用有写权限的目录重新运行。",
                 detail);
         } else {
             SetLastErrorUtf8(
                 "保存授权文件 license-SkyBox.dat 失败，可能是程序没有写入权限。\n"
-                "建议尝试：右键 SkyBox.exe → 以管理员身份运行后重试授权更新。");
+                "建议尝试：使用有写权限的目录重新运行。");
         }
         return LICENSE_ERROR;
     }
@@ -674,8 +642,8 @@ LICENSE_API int License_Activate(const char* activation_code, const char* userna
     g_is_activated = TRUE;
     g_license_source = LICENSE_SOURCE_OFFLINE;
     g_expire_time = expire_time;
-    strncpy_s(g_username, sizeof(g_username), safe_username, _TRUNCATE);
-    strncpy_s(g_email, sizeof(g_email), safe_email, _TRUNCATE);
+    lic_strcpy(g_username, sizeof(g_username), safe_username);
+    lic_strcpy(g_email, sizeof(g_email), safe_email);
 
     if (!InitializeTimeProtection(g_machine_code, g_verified_time)) {
         g_is_activated = FALSE;
@@ -694,7 +662,7 @@ LICENSE_API int License_Activate(const char* activation_code, const char* userna
     return LICENSE_OK;
 }
 
-LICENSE_API int License_GetLastErrorMsg(char* buffer, int buf_size) {
+LICENSE_API int License_GetLastErrorMsg(char *buffer, int buf_size) {
     if (!buffer || buf_size <= 0) return 0;
     size_t len = strlen(g_lastErrorMsg);
     if (len == 0) {
@@ -708,9 +676,7 @@ LICENSE_API int License_GetLastErrorMsg(char* buffer, int buf_size) {
 }
 
 LICENSE_API int License_Clear(void) {
-    if (!g_initialized) {
-        return LICENSE_NOT_INITIALIZED;
-    }
+    if (!g_initialized) return LICENSE_NOT_INITIALIZED;
 
     ClearActivationStatus();
 
@@ -723,8 +689,8 @@ LICENSE_API int License_Clear(void) {
     return LICENSE_OK;
 }
 
-LICENSE_API int License_ImportOnline(const char* activation_code, const char* username,
-                                     const char* email, uint32_t expire_time,
+LICENSE_API int License_ImportOnline(const char *activation_code, const char *username,
+                                     const char *email, uint32_t expire_time,
                                      uint32_t server_time) {
     g_lastErrorMsg[0] = '\0';
     if (!g_initialized) {
@@ -743,25 +709,23 @@ LICENSE_API int License_ImportOnline(const char* activation_code, const char* us
     char safe_code[64] = {0};
     char safe_username[USERNAME_LEN] = {0};
     char safe_email[EMAIL_LEN] = {0};
-    strncpy_s(safe_code, sizeof(safe_code), activation_code, _TRUNCATE);
-    strncpy_s(safe_username, sizeof(safe_username), username, _TRUNCATE);
-    strncpy_s(safe_email, sizeof(safe_email), email, _TRUNCATE);
+    lic_strcpy(safe_code, sizeof(safe_code), activation_code);
+    lic_strcpy(safe_username, sizeof(safe_username), username);
+    lic_strcpy(safe_email, sizeof(safe_email), email);
 
     uint32_t anchor_time = (server_time > 0) ? server_time : DllGetTrustedTime();
 
     if (!SaveOnlineActivation(safe_code, g_machine_code, expire_time,
                               safe_username, safe_email, anchor_time)) {
-        const char* detail = GetLastLicenseFileIOError();
+        const char *detail = GetLastLicenseFileIOError();
         if (detail && detail[0]) {
             SetLastErrorUtf8(
                 "保存授权文件 license-SkyBox.dat 失败，可能是程序没有写入权限。\n"
-                "==============================\n【详细诊断信息】\n%s\n==============================\n"
-                "建议尝试：先关闭所有可能占用 license-SkyBox.dat 的程序，再右键 SkyBox.exe → 以管理员身份运行后重试。",
+                "【详细诊断信息】\n%s\n"
+                "建议尝试：关闭占用文件的其他程序，或使用有写权限的目录重新运行。",
                 detail);
         } else {
-            SetLastErrorUtf8(
-                "保存授权文件 license-SkyBox.dat 失败，可能是程序没有写入权限。\n"
-                "建议尝试：右键 SkyBox.exe → 以管理员身份运行后重试授权更新。");
+            SetLastErrorUtf8("保存授权文件 license-SkyBox.dat 失败，可能是程序没有写入权限。");
         }
         return LICENSE_ERROR;
     }
@@ -769,8 +733,8 @@ LICENSE_API int License_ImportOnline(const char* activation_code, const char* us
     g_is_activated = TRUE;
     g_license_source = LICENSE_SOURCE_ONLINE;
     g_expire_time = expire_time;
-    strncpy_s(g_username, sizeof(g_username), safe_username, _TRUNCATE);
-    strncpy_s(g_email, sizeof(g_email), safe_email, _TRUNCATE);
+    lic_strcpy(g_username, sizeof(g_username), safe_username);
+    lic_strcpy(g_email, sizeof(g_email), safe_email);
 
     if (!InitializeTimeProtection(g_machine_code, anchor_time)) {
         g_is_activated = FALSE;
@@ -789,13 +753,10 @@ LICENSE_API int License_ImportOnline(const char* activation_code, const char* us
     return LICENSE_OK;
 }
 
-LICENSE_API int License_GetOnlineCode(char* code, int buf_size, uint32_t* last_verify) {
-    if (!g_initialized) {
-        return LICENSE_NOT_INITIALIZED;
-    }
-    if (!code || buf_size < 20) {
-        return LICENSE_INVALID_PARAM;
-    }
+LICENSE_API int License_GetOnlineCode(char *code, int buf_size, uint32_t *last_verify) {
+    if (!g_initialized) return LICENSE_NOT_INITIALIZED;
+    if (!code || buf_size < 20) return LICENSE_INVALID_PARAM;
+
     if (!LoadOnlineAuth(code, (size_t)buf_size, last_verify) || code[0] == '\0') {
         code[0] = '\0';
         if (last_verify) *last_verify = 0;
@@ -805,23 +766,15 @@ LICENSE_API int License_GetOnlineCode(char* code, int buf_size, uint32_t* last_v
 }
 
 LICENSE_API int License_GetSource(void) {
-    if (!g_initialized) {
-        return LICENSE_SOURCE_NONE;
-    }
+    if (!g_initialized) return LICENSE_SOURCE_NONE;
     return g_license_source;
 }
 
 LICENSE_API int License_ClearOnline(void) {
-    if (!g_initialized) {
-        return LICENSE_NOT_INITIALIZED;
-    }
-    if (g_license_source != LICENSE_SOURCE_ONLINE) {
-        return LICENSE_OK;
-    }
+    if (!g_initialized) return LICENSE_NOT_INITIALIZED;
+    if (g_license_source != LICENSE_SOURCE_ONLINE) return LICENSE_OK;
 
-    if (!ClearOnlineActivation()) {
-        return LICENSE_ERROR;
-    }
+    if (!ClearOnlineActivation()) return LICENSE_ERROR;
 
     g_is_activated = FALSE;
     g_license_source = LICENSE_SOURCE_NONE;
@@ -831,29 +784,22 @@ LICENSE_API int License_ClearOnline(void) {
     return LICENSE_OK;
 }
 
-LICENSE_API int License_GenerateCode(const char* machine_code, uint64_t total_seconds,
-                                       const char* username, const char* email,
-                                       char* activation_code) {
-    if (!g_initialized) {
-        return LICENSE_NOT_INITIALIZED;
-    }
-
-    if (!machine_code || !activation_code) {
-        return LICENSE_INVALID_PARAM;
-    }
+LICENSE_API int License_GenerateCode(const char *machine_code, uint64_t total_seconds,
+                                     const char *username, const char *email,
+                                     char *activation_code) {
+    if (!g_initialized) return LICENSE_NOT_INITIALIZED;
+    if (!machine_code || !activation_code) return LICENSE_INVALID_PARAM;
 
     g_verified_time = DllGetTrustedTime();
 
     char safe_username[USERNAME_LEN] = {0};
     char safe_email[EMAIL_LEN] = {0};
-
-    if (username) strncpy_s(safe_username, sizeof(safe_username), username, _TRUNCATE);
-    if (email) strncpy_s(safe_email, sizeof(safe_email), email, _TRUNCATE);
+    if (username) lic_strcpy(safe_username, sizeof(safe_username), username);
+    if (email) lic_strcpy(safe_email, sizeof(safe_email), email);
 
     if (!GenerateActivationCode(machine_code, total_seconds, safe_username, safe_email,
-                                  activation_code, ACTIVATION_CODE_LEN, g_verified_time)) {
+                                activation_code, ACTIVATION_CODE_LEN, g_verified_time)) {
         return LICENSE_ERROR;
     }
-
     return LICENSE_OK;
 }

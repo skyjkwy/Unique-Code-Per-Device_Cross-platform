@@ -1,17 +1,24 @@
 #ifndef LICENSE_DLL_H
 #define LICENSE_DLL_H
 
-#include <windows.h>
+#include "platform.h"
+
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#ifdef LICENSE_DLL_EXPORTS
-    #define LICENSE_API __declspec(dllexport)
+#if defined(_WIN32)
+    #if defined(LICENSE_DLL_EXPORTS)
+        #define LICENSE_API __declspec(dllexport)
+    #elif defined(LICENSE_STATIC)
+        #define LICENSE_API
+    #else
+        #define LICENSE_API __declspec(dllimport)
+    #endif
 #else
-    #define LICENSE_API __declspec(dllimport)
+    #define LICENSE_API __attribute__((visibility("default")))
 #endif
 
 #define LICENSE_OK 0
@@ -58,7 +65,7 @@ LICENSE_API int License_Init(const LicenseConfig* config);
 
 LICENSE_API void License_Shutdown(void);
 
-LICENSE_API BOOL License_IsActivated(void);
+LICENSE_API lic_bool License_IsActivated(void);
 
 LICENSE_API int License_GetSessionKey(unsigned char* out_key, int buf_size);
 
@@ -70,7 +77,7 @@ LICENSE_API int License_GetObfuscatedMachineCode(char* obfuscated_out, int buf_s
 
 LICENSE_API int License_NormalizeMachineCode(const char* input_machine_code, char* normalized_out, int buf_size);
 
-LICENSE_API BOOL License_Verify(void);
+LICENSE_API lic_bool License_Verify(void);
 
 LICENSE_API int License_ShowActivationDialog(HWND parent_hwnd);
 
@@ -81,8 +88,8 @@ LICENSE_API int License_GetLastErrorMsg(char* buffer, int buf_size);
 LICENSE_API int License_Clear(void);
 
 LICENSE_API int License_GenerateCode(const char* machine_code, uint64_t total_seconds,
-                                      const char* username, const char* email,
-                                      char* activation_code);
+                                     const char* username, const char* email,
+                                     char* activation_code);
 
 #define LICENSE_SOURCE_NONE     0
 #define LICENSE_SOURCE_OFFLINE  1
