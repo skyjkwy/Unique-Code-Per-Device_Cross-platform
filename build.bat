@@ -51,5 +51,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo [INFO] Removing intermediate files...
+for %%f in (license_stage1.dll license_stage1.lib license_stage1.exp hashgen.exe embed_key.exe license.exp final_hash.h) do (
+    if exist "%BUILD%\%%f" del /q "%BUILD%\%%f"
+)
+if exist "%BUILD%\*.pdb" del /q "%BUILD%\*.pdb"
+
 echo [OK] Build finished. Output: %BUILD%
 if defined PAUSE_ON_EXIT !PAUSE_ON_EXIT!
