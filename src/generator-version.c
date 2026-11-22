@@ -1,12 +1,12 @@
 #include "generator-version.h"
 
-#define GEN_VER_MAJOR    0
+#define GEN_VER_MAJOR    1
 
 #define GEN_VER_MINOR    0
 
-#define GEN_VER_BUILD    3
+#define GEN_VER_BUILD    0
 
-#define GEN_VER_REVISION 5
+#define GEN_VER_REVISION 0
 
 #define GEN_VER_STAGE       ""
 
